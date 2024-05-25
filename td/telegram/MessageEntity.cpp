@@ -6,7 +6,6 @@
 //
 #include "td/telegram/MessageEntity.h"
 
-#include "td/telegram/ContactsManager.h"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DialogManager.h"
 #include "td/telegram/LinkManager.h"
@@ -15,6 +14,7 @@
 #include "td/telegram/SecretChatLayer.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/Td.h"
+#include "td/telegram/UserManager.h"
 
 #include "td/actor/MultiPromise.h"
 
@@ -162,7 +162,7 @@ tl_object_ptr<td_api::TextEntityType> MessageEntity::get_text_entity_type_object
     case MessageEntity::Type::TextUrl:
       return make_tl_object<td_api::textEntityTypeTextUrl>(argument);
     case MessageEntity::Type::MentionName:
-      // can't use contacts_manager, because can be called from a static request
+      // can't use user_manager, because can be called from a static request
       return make_tl_object<td_api::textEntityTypeMentionName>(user_id.get());
     case MessageEntity::Type::Cashtag:
       return make_tl_object<td_api::textEntityTypeCashtag>();
@@ -1023,118 +1023,116 @@ static bool is_common_tld(Slice str) {
        "americanfamily", "amex", "amfam", "amica", "amsterdam", "analytics", "android", "anquan", "anz", "ao", "aol",
        "apartments", "app", "apple", "aq", "aquarelle", "ar", "arab", "aramco", "archi", "army", "arpa", "art", "arte",
        "as", "asda", "asia", "associates", "at", "athleta", "attorney", "au", "auction", "audi", "audible", "audio",
-       "auspost", "author", "auto", "autos", "avianca", "aw", "aws", "ax", "axa", "az", "azure", "ba", "baby", "baidu",
-       "banamex", "bananarepublic", "band", "bank", "bar", "barcelona", "barclaycard", "barclays", "barefoot",
-       "bargains", "baseball", "basketball", "bauhaus", "bayern", "bb", "bbc", "bbt", "bbva", "bcg", "bcn", "bd", "be",
-       "beats", "beauty", "beer", "bentley", "berlin", "best", "bestbuy", "bet", "bf", "bg", "bh", "bharti", "bi",
-       "bible", "bid", "bike", "bing", "bingo", "bio", "biz", "bj", "black", "blackfriday", "blockbuster", "blog",
-       "bloomberg", "blue", "bm", "bms", "bmw", "bn", "bnpparibas", "bo", "boats", "boehringer", "bofa", "bom", "bond",
-       "boo", "book", "booking", "bosch", "bostik", "boston", "bot", "boutique", "box", "br", "bradesco", "bridgestone",
-       "broadway", "broker", "brother", "brussels", "bs", "bt", "build", "builders", "business", "buy", "buzz", "bv",
-       "bw", "by", "bz", "bzh", "ca", "cab", "cafe", "cal", "call", "calvinklein", "cam", "camera", "camp", "canon",
-       "capetown", "capital", "capitalone", "car", "caravan", "cards", "care", "career", "careers", "cars", "casa",
-       "case", "cash", "casino", "cat", "catering", "catholic", "cba", "cbn", "cbre", "cbs", "cc", "cd", "center",
-       "ceo", "cern", "cf", "cfa", "cfd", "cg", "ch", "chanel", "channel", "charity", "chase", "chat", "cheap",
-       "chintai", "christmas", "chrome", "church", "ci", "cipriani", "circle", "cisco", "citadel", "citi", "citic",
-       "city", "cityeats", "ck", "cl", "claims", "cleaning", "click", "clinic", "clinique", "clothing", "cloud", "club",
-       "clubmed", "cm", "cn", "co", "coach", "codes", "coffee", "college", "cologne", "com", "comcast", "commbank",
-       "community", "company", "compare", "computer", "comsec", "condos", "construction", "consulting", "contact",
-       "contractors", "cooking", "cool", "coop", "corsica", "country", "coupon", "coupons", "courses", "cpa", "cr",
-       "credit", "creditcard", "creditunion", "cricket", "crown", "crs", "cruise", "cruises", "cu", "cuisinella", "cv",
-       "cw", "cx", "cy", "cymru", "cyou", "cz", "dabur", "dad", "dance", "data", "date", "dating", "datsun", "day",
-       "dclk", "dds", "de", "deal", "dealer", "deals", "degree", "delivery", "dell", "deloitte", "delta", "democrat",
-       "dental", "dentist", "desi", "design", "dev", "dhl", "diamonds", "diet", "digital", "direct", "directory",
-       "discount", "discover", "dish", "diy", "dj", "dk", "dm", "dnp", "do", "docs", "doctor", "dog", "domains", "dot",
-       "download", "drive", "dtv", "dubai", "dunlop", "dupont", "durban", "dvag", "dvr", "dz", "earth", "eat", "ec",
-       "eco", "edeka", "edu", "education", "ee", "eg", "email", "emerck", "energy", "engineer", "engineering",
-       "enterprises", "epson", "equipment", "er", "ericsson", "erni", "es", "esq", "estate", "et", "etisalat", "eu",
-       "eurovision", "eus", "events", "exchange", "expert", "exposed", "express", "extraspace", "fage", "fail",
-       "fairwinds", "faith", "family", "fan", "fans", "farm", "farmers", "fashion", "fast", "fedex", "feedback",
+       "auspost", "author", "auto", "autos", "aw", "aws", "ax", "axa", "az", "azure", "ba", "baby", "baidu", "banamex",
+       "band", "bank", "bar", "barcelona", "barclaycard", "barclays", "barefoot", "bargains", "baseball", "basketball",
+       "bauhaus", "bayern", "bb", "bbc", "bbt", "bbva", "bcg", "bcn", "bd", "be", "beats", "beauty", "beer", "bentley",
+       "berlin", "best", "bestbuy", "bet", "bf", "bg", "bh", "bharti", "bi", "bible", "bid", "bike", "bing", "bingo",
+       "bio", "biz", "bj", "black", "blackfriday", "blockbuster", "blog", "bloomberg", "blue", "bm", "bms", "bmw", "bn",
+       "bnpparibas", "bo", "boats", "boehringer", "bofa", "bom", "bond", "boo", "book", "booking", "bosch", "bostik",
+       "boston", "bot", "boutique", "box", "br", "bradesco", "bridgestone", "broadway", "broker", "brother", "brussels",
+       "bs", "bt", "build", "builders", "business", "buy", "buzz", "bv", "bw", "by", "bz", "bzh", "ca", "cab", "cafe",
+       "cal", "call", "calvinklein", "cam", "camera", "camp", "canon", "capetown", "capital", "capitalone", "car",
+       "caravan", "cards", "care", "career", "careers", "cars", "casa", "case", "cash", "casino", "cat", "catering",
+       "catholic", "cba", "cbn", "cbre", "cc", "cd", "center", "ceo", "cern", "cf", "cfa", "cfd", "cg", "ch", "chanel",
+       "channel", "charity", "chase", "chat", "cheap", "chintai", "christmas", "chrome", "church", "ci", "cipriani",
+       "circle", "cisco", "citadel", "citi", "citic", "city", "ck", "cl", "claims", "cleaning", "click", "clinic",
+       "clinique", "clothing", "cloud", "club", "clubmed", "cm", "cn", "co", "coach", "codes", "coffee", "college",
+       "cologne", "com", "commbank", "community", "company", "compare", "computer", "comsec", "condos", "construction",
+       "consulting", "contact", "contractors", "cooking", "cool", "coop", "corsica", "country", "coupon", "coupons",
+       "courses", "cpa", "cr", "credit", "creditcard", "creditunion", "cricket", "crown", "crs", "cruise", "cruises",
+       "cu", "cuisinella", "cv", "cw", "cx", "cy", "cymru", "cyou", "cz", "dabur", "dad", "dance", "data", "date",
+       "dating", "datsun", "day", "dclk", "dds", "de", "deal", "dealer", "deals", "degree", "delivery", "dell",
+       "deloitte", "delta", "democrat", "dental", "dentist", "desi", "design", "dev", "dhl", "diamonds", "diet",
+       "digital", "direct", "directory", "discount", "discover", "dish", "diy", "dj", "dk", "dm", "dnp", "do", "docs",
+       "doctor", "dog", "domains", "dot", "download", "drive", "dtv", "dubai", "dunlop", "dupont", "durban", "dvag",
+       "dvr", "dz", "earth", "eat", "ec", "eco", "edeka", "edu", "education", "ee", "eg", "email", "emerck", "energy",
+       "engineer", "engineering", "enterprises", "epson", "equipment", "er", "ericsson", "erni", "es", "esq", "estate",
+       "et", "eu", "eurovision", "eus", "events", "exchange", "expert", "exposed", "express", "extraspace", "fage",
+       "fail", "fairwinds", "faith", "family", "fan", "fans", "farm", "farmers", "fashion", "fast", "fedex", "feedback",
        "ferrari", "ferrero", "fi", "fidelity", "fido", "film", "final", "finance", "financial", "fire", "firestone",
        "firmdale", "fish", "fishing", "fit", "fitness", "fj", "fk", "flickr", "flights", "flir", "florist", "flowers",
        "fly", "fm", "fo", "foo", "food", "football", "ford", "forex", "forsale", "forum", "foundation", "fox", "fr",
-       "free", "fresenius", "frl", "frogans", "frontdoor", "frontier", "ftr", "fujitsu", "fun", "fund", "furniture",
-       "futbol", "fyi", "ga", "gal", "gallery", "gallo", "gallup", "game", "games", "gap", "garden", "gay", "gb",
-       "gbiz", "gd", "gdn", "ge", "gea", "gent", "genting", "george", "gf", "gg", "ggee", "gh", "gi", "gift", "gifts",
-       "gives", "giving", "gl", "glass", "gle", "global", "globo", "gm", "gmail", "gmbh", "gmo", "gmx", "gn", "godaddy",
-       "gold", "goldpoint", "golf", "goo", "goodyear", "goog", "google", "gop", "got", "gov", "gp", "gq", "gr",
-       "grainger", "graphics", "gratis", "green", "gripe", "grocery", "group", "gs", "gt", "gu", "guardian", "gucci",
-       "guge", "guide", "guitars", "guru", "gw", "gy", "hair", "hamburg", "hangout", "haus", "hbo", "hdfc", "hdfcbank",
-       "health", "healthcare", "help", "helsinki", "here", "hermes", "hiphop", "hisamitsu", "hitachi", "hiv", "hk",
-       "hkt", "hm", "hn", "hockey", "holdings", "holiday", "homedepot", "homegoods", "homes", "homesense", "honda",
-       "horse", "hospital", "host", "hosting", "hot", "hotels", "hotmail", "house", "how", "hr", "hsbc", "ht", "hu",
-       "hughes", "hyatt", "hyundai", "ibm", "icbc", "ice", "icu", "id", "ie", "ieee", "ifm", "ikano", "il", "im",
-       "imamat", "imdb", "immo", "immobilien", "in", "inc", "industries", "infiniti", "info", "ing", "ink", "institute",
+       "free", "fresenius", "frl", "frogans", "frontier", "ftr", "fujitsu", "fun", "fund", "furniture", "futbol", "fyi",
+       "ga", "gal", "gallery", "gallo", "gallup", "game", "games", "gap", "garden", "gay", "gb", "gbiz", "gd", "gdn",
+       "ge", "gea", "gent", "genting", "george", "gf", "gg", "ggee", "gh", "gi", "gift", "gifts", "gives", "giving",
+       "gl", "glass", "gle", "global", "globo", "gm", "gmail", "gmbh", "gmo", "gmx", "gn", "godaddy", "gold",
+       "goldpoint", "golf", "goo", "goodyear", "goog", "google", "gop", "got", "gov", "gp", "gq", "gr", "grainger",
+       "graphics", "gratis", "green", "gripe", "grocery", "group", "gs", "gt", "gu", "gucci", "guge", "guide",
+       "guitars", "guru", "gw", "gy", "hair", "hamburg", "hangout", "haus", "hbo", "hdfc", "hdfcbank", "health",
+       "healthcare", "help", "helsinki", "here", "hermes", "hiphop", "hisamitsu", "hitachi", "hiv", "hk", "hkt", "hm",
+       "hn", "hockey", "holdings", "holiday", "homedepot", "homegoods", "homes", "homesense", "honda", "horse",
+       "hospital", "host", "hosting", "hot", "hotels", "hotmail", "house", "how", "hr", "hsbc", "ht", "hu", "hughes",
+       "hyatt", "hyundai", "ibm", "icbc", "ice", "icu", "id", "ie", "ieee", "ifm", "ikano", "il", "im", "imamat",
+       "imdb", "immo", "immobilien", "in", "inc", "industries", "infiniti", "info", "ing", "ink", "institute",
        "insurance", "insure", "int", "international", "intuit", "investments", "io", "ipiranga", "iq", "ir", "irish",
        "is", "ismaili", "ist", "istanbul", "it", "itau", "itv", "jaguar", "java", "jcb", "je", "jeep", "jetzt",
        "jewelry", "jio", "jll", "jm", "jmp", "jnj", "jo", "jobs", "joburg", "jot", "joy", "jp", "jpmorgan", "jprs",
        "juegos", "juniper", "kaufen", "kddi", "ke", "kerryhotels", "kerrylogistics", "kerryproperties", "kfh", "kg",
-       "kh", "ki", "kia", "kids", "kim", "kinder", "kindle", "kitchen", "kiwi", "km", "kn", "koeln", "komatsu",
-       "kosher", "kp", "kpmg", "kpn", "kr", "krd", "kred", "kuokgroup", "kw", "ky", "kyoto", "kz", "la", "lacaixa",
-       "lamborghini", "lamer", "lancaster", "land", "landrover", "lanxess", "lasalle", "lat", "latino", "latrobe",
-       "law", "lawyer", "lb", "lc", "lds", "lease", "leclerc", "lefrak", "legal", "lego", "lexus", "lgbt", "li", "lidl",
-       "life", "lifeinsurance", "lifestyle", "lighting", "like", "lilly", "limited", "limo", "lincoln", "link", "lipsy",
-       "live", "living", "lk", "llc", "llp", "loan", "loans", "locker", "locus", "lol", "london", "lotte", "lotto",
-       "love", "lpl", "lplfinancial", "lr", "ls", "lt", "ltd", "ltda", "lu", "lundbeck", "luxe", "luxury", "lv", "ly",
-       "ma", "madrid", "maif", "maison", "makeup", "man", "management", "mango", "map", "market", "marketing",
-       "markets", "marriott", "marshalls", "mattel", "mba", "mc", "mckinsey", "md", "me", "med", "media", "meet",
-       "melbourne", "meme", "memorial", "men", "menu", "merckmsd", "mg", "mh", "miami", "microsoft", "mil", "mini",
-       "mint", "mit", "mitsubishi", "mk", "ml", "mlb", "mls", "mm", "mma", "mn", "mo", "mobi", "mobile", "moda", "moe",
-       "moi", "mom", "monash", "money", "monster", "mormon", "mortgage", "moscow", "moto", "motorcycles", "mov",
-       "movie", "mp", "mq", "mr", "ms", "msd", "mt", "mtn", "mtr", "mu", "museum", "music", "mv", "mw", "mx", "my",
-       "mz", "na", "nab", "nagoya", "name", "natura", "navy", "nba", "nc", "ne", "nec", "net", "netbank", "netflix",
-       "network", "neustar", "new", "news", "next", "nextdirect", "nexus", "nf", "nfl", "ng", "ngo", "nhk", "ni",
-       "nico", "nike", "nikon", "ninja", "nissan", "nissay", "nl", "no", "nokia", "norton", "now", "nowruz", "nowtv",
-       "np", "nr", "nra", "nrw", "ntt", "nu", "nyc", "nz", "obi", "observer", "office", "okinawa", "olayan",
-       "olayangroup", "oldnavy", "ollo", "om", "omega", "one", "ong", "onl", "online", "ooo", "open", "oracle",
-       "orange", "org", "organic", "origins", "osaka", "otsuka", "ott", "ovh", "pa", "page", "panasonic", "paris",
-       "pars", "partners", "parts", "party", "pay", "pccw", "pe", "pet", "pf", "pfizer", "pg", "ph", "pharmacy", "phd",
-       "philips", "phone", "photo", "photography", "photos", "physio", "pics", "pictet", "pictures", "pid", "pin",
-       "ping", "pink", "pioneer", "pizza", "pk", "pl", "place", "play", "playstation", "plumbing", "plus", "pm", "pn",
-       "pnc", "pohl", "poker", "politie", "porn", "post", "pr", "pramerica", "praxi", "press", "prime", "pro", "prod",
-       "productions", "prof", "progressive", "promo", "properties", "property", "protection", "pru", "prudential", "ps",
-       "pt", "pub", "pw", "pwc", "py", "qa", "qpon", "quebec", "quest", "racing", "radio", "re", "read", "realestate",
-       "realtor", "realty", "recipes", "red", "redstone", "redumbrella", "rehab", "reise", "reisen", "reit", "reliance",
-       "ren", "rent", "rentals", "repair", "report", "republican", "rest", "restaurant", "review", "reviews", "rexroth",
-       "rich", "richardli", "ricoh", "ril", "rio", "rip", "ro", "rocher", "rocks", "rodeo", "rogers", "room", "rs",
-       "rsvp", "ru", "rugby", "ruhr", "run", "rw", "rwe", "ryukyu", "sa", "saarland", "safe", "safety", "sakura",
-       "sale", "salon", "samsclub", "samsung", "sandvik", "sandvikcoromant", "sanofi", "sap", "sarl", "sas", "save",
-       "saxo", "sb", "sbi", "sbs", "sc", "sca", "scb", "schaeffler", "schmidt", "scholarships", "school", "schule",
-       "schwarz", "science", "scot", "sd", "se", "search", "seat", "secure", "security", "seek", "select", "sener",
-       "services", "seven", "sew", "sex", "sexy", "sfr", "sg", "sh", "shangrila", "sharp", "shaw", "shell", "shia",
-       "shiksha", "shoes", "shop", "shopping", "shouji", "show", "showtime", "si", "silk", "sina", "singles", "site",
-       "sj", "sk", "ski", "skin", "sky", "skype", "sl", "sling", "sm", "smart", "smile", "sn", "sncf", "so", "soccer",
-       "social", "softbank", "software", "sohu", "solar", "solutions", "song", "sony", "soy", "spa", "space", "sport",
-       "spot", "sr", "srl", "ss", "st", "stada", "staples", "star", "statebank", "statefarm", "stc", "stcgroup",
-       "stockholm", "storage", "store", "stream", "studio", "study", "style", "su", "sucks", "supplies", "supply",
-       "support", "surf", "surgery", "suzuki", "sv", "swatch", "swiss", "sx", "sy", "sydney", "systems", "sz", "tab",
-       "taipei", "talk", "taobao", "target", "tatamotors", "tatar", "tattoo", "tax", "taxi", "tc", "tci", "td", "tdk",
-       "team", "tech", "technology", "tel", "temasek", "tennis", "teva", "tf", "tg", "th", "thd", "theater", "theatre",
-       "tiaa", "tickets", "tienda", "tips", "tires", "tirol", "tj", "tjmaxx", "tjx", "tk", "tkmaxx", "tl", "tm",
-       "tmall", "tn", "to", "today", "tokyo", "tools", "top", "toray", "toshiba", "total", "tours", "town", "toyota",
-       "toys", "tr", "trade", "trading", "training", "travel", "travelers", "travelersinsurance", "trust", "trv", "tt",
-       "tube", "tui", "tunes", "tushu", "tv", "tvs", "tw", "tz", "ua", "ubank", "ubs", "ug", "uk", "unicom",
-       "university", "uno", "uol", "ups", "us", "uy", "uz", "va", "vacations", "vana", "vanguard", "vc", "ve", "vegas",
-       "ventures", "verisign", "versicherung", "vet", "vg", "vi", "viajes", "video", "vig", "viking", "villas", "vin",
-       "vip", "virgin", "visa", "vision", "viva", "vivo", "vlaanderen", "vn", "vodka", "volkswagen", "volvo", "vote",
-       "voting", "voto", "voyage", "vu", "wales", "walmart", "walter", "wang", "wanggou", "watch", "watches", "weather",
-       "weatherchannel", "webcam", "weber", "website", "wed", "wedding", "weibo", "weir", "wf", "whoswho", "wien",
-       "wiki", "williamhill", "win", "windows", "wine", "winners", "wme", "wolterskluwer", "woodside", "work", "works",
-       "world", "wow", "ws", "wtc", "wtf", "xbox", "xerox", "xfinity", "xihuan", "xin", "कॉम", "セール", "佛山", "ಭಾರತ",
-       "慈善", "集团", "在线", "한국", "ଭାରତ", "点看", "คอม", "ভাৰত", "ভারত", "八卦", "ישראל", "موقع", "বাংলা", "公益",
-       "公司", "香格里拉", "网站", "移动", "我爱你", "москва", "қаз", "католик", "онлайн", "сайт", "联通", "срб", "бг",
-       "бел", "קום", "时尚", "微博", "淡马锡", "ファッション", "орг", "नेट", "ストア", "アマゾン", "삼성", "சிங்கப்பூர்",
-       "商标", "商店", "商城", "дети", "мкд", "ею", "ポイント", "新闻", "家電", "كوم", "中文网", "中信", "中国", "中國",
-       "娱乐", "谷歌", "భారత్", "ලංකා", "電訊盈科", "购物", "クラウド", "ભારત", "通販", "भारतम्", "भारत", "भारोत", "网店",
-       "संगठन", "餐厅", "网络", "ком", "укр", "香港", "亚马逊", "食品", "飞利浦", "台湾", "台灣", "手机", "мон",
-       "الجزائر", "عمان", "ارامكو", "ایران", "العليان", "اتصالات", "امارات", "بازار", "موريتانيا", "پاکستان", "الاردن",
-       "بارت", "بھارت", "المغرب", "ابوظبي", "البحرين", "السعودية", "ڀارت", "كاثوليك", "سودان", "همراه", "عراق",
-       "مليسيا", "澳門", "닷컴", "政府", "شبكة", "بيتك", "عرب", "გე", "机构", "组织机构", "健康", "ไทย", "سورية",
-       "招聘", "рус", "рф", "تونس", "大拿", "ລາວ", "みんな", "グーグル", "ευ", "ελ", "世界", "書籍", "ഭാരതം", "ਭਾਰਤ",
-       "网址", "닷넷", "コム", "天主教", "游戏", "vermögensberater", "vermögensberatung", "企业", "信息", "嘉里大酒店",
-       "嘉里", "مصر", "قطر", "广东", "இலங்கை", "இந்தியா", "հայ", "新加坡", "فلسطين", "政务", "xxx", "xyz", "yachts",
-       "yahoo", "yamaxun", "yandex", "ye", "yodobashi", "yoga", "yokohama", "you", "youtube", "yt", "yun", "za",
-       "zappos", "zara", "zero", "zip", "zm", "zone", "zuerich",
+       "kh", "ki", "kia", "kids", "kim", "kindle", "kitchen", "kiwi", "km", "kn", "koeln", "komatsu", "kosher", "kp",
+       "kpmg", "kpn", "kr", "krd", "kred", "kuokgroup", "kw", "ky", "kyoto", "kz", "la", "lacaixa", "lamborghini",
+       "lamer", "lancaster", "land", "landrover", "lanxess", "lasalle", "lat", "latino", "latrobe", "law", "lawyer",
+       "lb", "lc", "lds", "lease", "leclerc", "lefrak", "legal", "lego", "lexus", "lgbt", "li", "lidl", "life",
+       "lifeinsurance", "lifestyle", "lighting", "like", "lilly", "limited", "limo", "lincoln", "link", "lipsy", "live",
+       "living", "lk", "llc", "llp", "loan", "loans", "locker", "locus", "lol", "london", "lotte", "lotto", "love",
+       "lpl", "lplfinancial", "lr", "ls", "lt", "ltd", "ltda", "lu", "lundbeck", "luxe", "luxury", "lv", "ly", "ma",
+       "madrid", "maif", "maison", "makeup", "man", "management", "mango", "map", "market", "marketing", "markets",
+       "marriott", "marshalls", "mattel", "mba", "mc", "mckinsey", "md", "me", "med", "media", "meet", "melbourne",
+       "meme", "memorial", "men", "menu", "merckmsd", "mg", "mh", "miami", "microsoft", "mil", "mini", "mint", "mit",
+       "mitsubishi", "mk", "ml", "mlb", "mls", "mm", "mma", "mn", "mo", "mobi", "mobile", "moda", "moe", "moi", "mom",
+       "monash", "money", "monster", "mormon", "mortgage", "moscow", "moto", "motorcycles", "mov", "movie", "mp", "mq",
+       "mr", "ms", "msd", "mt", "mtn", "mtr", "mu", "museum", "music", "mv", "mw", "mx", "my", "mz", "na", "nab",
+       "nagoya", "name", "natura", "navy", "nba", "nc", "ne", "nec", "net", "netbank", "netflix", "network", "neustar",
+       "new", "news", "next", "nextdirect", "nexus", "nf", "nfl", "ng", "ngo", "nhk", "ni", "nico", "nike", "nikon",
+       "ninja", "nissan", "nissay", "nl", "no", "nokia", "norton", "now", "nowruz", "nowtv", "np", "nr", "nra", "nrw",
+       "ntt", "nu", "nyc", "nz", "obi", "observer", "office", "okinawa", "olayan", "olayangroup", "ollo", "om", "omega",
+       "one", "ong", "onl", "online", "ooo", "open", "oracle", "orange", "org", "organic", "origins", "osaka", "otsuka",
+       "ott", "ovh", "pa", "page", "panasonic", "paris", "pars", "partners", "parts", "party", "pay", "pccw", "pe",
+       "pet", "pf", "pfizer", "pg", "ph", "pharmacy", "phd", "philips", "phone", "photo", "photography", "photos",
+       "physio", "pics", "pictet", "pictures", "pid", "pin", "ping", "pink", "pioneer", "pizza", "pk", "pl", "place",
+       "play", "playstation", "plumbing", "plus", "pm", "pn", "pnc", "pohl", "poker", "politie", "porn", "post", "pr",
+       "pramerica", "praxi", "press", "prime", "pro", "prod", "productions", "prof", "progressive", "promo",
+       "properties", "property", "protection", "pru", "prudential", "ps", "pt", "pub", "pw", "pwc", "py", "qa", "qpon",
+       "quebec", "quest", "racing", "radio", "re", "read", "realestate", "realtor", "realty", "recipes", "red",
+       "redstone", "redumbrella", "rehab", "reise", "reisen", "reit", "reliance", "ren", "rent", "rentals", "repair",
+       "report", "republican", "rest", "restaurant", "review", "reviews", "rexroth", "rich", "richardli", "ricoh",
+       "ril", "rio", "rip", "ro", "rocks", "rodeo", "rogers", "room", "rs", "rsvp", "ru", "rugby", "ruhr", "run", "rw",
+       "rwe", "ryukyu", "sa", "saarland", "safe", "safety", "sakura", "sale", "salon", "samsclub", "samsung", "sandvik",
+       "sandvikcoromant", "sanofi", "sap", "sarl", "sas", "save", "saxo", "sb", "sbi", "sbs", "sc", "scb", "schaeffler",
+       "schmidt", "scholarships", "school", "schule", "schwarz", "science", "scot", "sd", "se", "search", "seat",
+       "secure", "security", "seek", "select", "sener", "services", "seven", "sew", "sex", "sexy", "sfr", "sg", "sh",
+       "shangrila", "sharp", "shaw", "shell", "shia", "shiksha", "shoes", "shop", "shopping", "shouji", "show", "si",
+       "silk", "sina", "singles", "site", "sj", "sk", "ski", "skin", "sky", "skype", "sl", "sling", "sm", "smart",
+       "smile", "sn", "sncf", "so", "soccer", "social", "softbank", "software", "sohu", "solar", "solutions", "song",
+       "sony", "soy", "spa", "space", "sport", "spot", "sr", "srl", "ss", "st", "stada", "staples", "star", "statebank",
+       "statefarm", "stc", "stcgroup", "stockholm", "storage", "store", "stream", "studio", "study", "style", "su",
+       "sucks", "supplies", "supply", "support", "surf", "surgery", "suzuki", "sv", "swatch", "swiss", "sx", "sy",
+       "sydney", "systems", "sz", "tab", "taipei", "talk", "taobao", "target", "tatamotors", "tatar", "tattoo", "tax",
+       "taxi", "tc", "tci", "td", "tdk", "team", "tech", "technology", "tel", "temasek", "tennis", "teva", "tf", "tg",
+       "th", "thd", "theater", "theatre", "tiaa", "tickets", "tienda", "tips", "tires", "tirol", "tj", "tjmaxx", "tjx",
+       "tk", "tkmaxx", "tl", "tm", "tmall", "tn", "to", "today", "tokyo", "tools", "top", "toray", "toshiba", "total",
+       "tours", "town", "toyota", "toys", "tr", "trade", "trading", "training", "travel", "travelers",
+       "travelersinsurance", "trust", "trv", "tt", "tube", "tui", "tunes", "tushu", "tv", "tvs", "tw", "tz", "ua",
+       "ubank", "ubs", "ug", "uk", "unicom", "university", "uno", "uol", "ups", "us", "uy", "uz", "va", "vacations",
+       "vana", "vanguard", "vc", "ve", "vegas", "ventures", "verisign", "versicherung", "vet", "vg", "vi", "viajes",
+       "video", "vig", "viking", "villas", "vin", "vip", "virgin", "visa", "vision", "viva", "vivo", "vlaanderen", "vn",
+       "vodka", "volvo", "vote", "voting", "voto", "voyage", "vu", "wales", "walmart", "walter", "wang", "wanggou",
+       "watch", "watches", "weather", "weatherchannel", "webcam", "weber", "website", "wed", "wedding", "weibo", "weir",
+       "wf", "whoswho", "wien", "wiki", "williamhill", "win", "windows", "wine", "winners", "wme", "wolterskluwer",
+       "woodside", "work", "works", "world", "wow", "ws", "wtc", "wtf", "xbox", "xerox", "xihuan", "xin", "कॉम",
+       "セール", "佛山", "ಭಾರತ", "慈善", "集团", "在线", "한국", "ଭାରତ", "点看", "คอม", "ভাৰত", "ভারত", "八卦", "ישראל",
+       "موقع", "বাংলা", "公益", "公司", "香格里拉", "网站", "移动", "我爱你", "москва", "қаз", "католик", "онлайн",
+       "сайт", "联通", "срб", "бг", "бел", "קום", "时尚", "微博", "淡马锡", "ファッション", "орг", "नेट", "ストア",
+       "アマゾン", "삼성", "சிங்கப்பூர்", "商标", "商店", "商城", "дети", "мкд", "ею", "ポイント", "新闻", "家電", "كوم",
+       "中文网", "中信", "中国", "中國", "娱乐", "谷歌", "భారత్", "ලංකා", "電訊盈科", "购物", "クラウド", "ભારત", "通販",
+       "भारतम्", "भारत", "भारोत", "网店", "संगठन", "餐厅", "网络", "ком", "укр", "香港", "亚马逊", "食品", "飞利浦",
+       "台湾", "台灣", "手机", "мон", "الجزائر", "عمان", "ارامكو", "ایران", "العليان", "امارات", "بازار", "موريتانيا",
+       "پاکستان", "الاردن", "بارت", "بھارت", "المغرب", "ابوظبي", "البحرين", "السعودية", "ڀارت", "كاثوليك", "سودان",
+       "همراه", "عراق", "مليسيا", "澳門", "닷컴", "政府", "شبكة", "بيتك", "عرب", "გე", "机构", "组织机构", "健康",
+       "ไทย", "سورية", "招聘", "рус", "рф", "تونس", "大拿", "ລາວ", "みんな", "グーグル", "ευ", "ελ", "世界", "書籍",
+       "ഭാരതം", "ਭਾਰਤ", "网址", "닷넷", "コム", "天主教", "游戏", "vermögensberater", "vermögensberatung", "企业",
+       "信息", "嘉里大酒店", "嘉里", "مصر", "قطر", "广东", "இலங்கை", "இந்தியா", "հայ", "新加坡", "فلسطين", "政务", "xxx",
+       "xyz", "yachts", "yahoo", "yamaxun", "yandex", "ye", "yodobashi", "yoga", "yokohama", "you", "youtube", "yt",
+       "yun", "za", "zappos", "zara", "zero", "zip", "zm", "zone", "zuerich",
        // comment for clang-format to prevent it from placing all strings on separate lines
        "zw"});
   bool is_lower = true;
@@ -1414,24 +1412,6 @@ void remove_empty_entities(vector<MessageEntity> &entities) {
         return false;
     }
   });
-}
-
-static bool is_allowed_quote_entity(const MessageEntity &entity) {
-  switch (entity.type) {
-    case MessageEntity::Type::Bold:
-    case MessageEntity::Type::Italic:
-    case MessageEntity::Type::Underline:
-    case MessageEntity::Type::Strikethrough:
-    case MessageEntity::Type::Spoiler:
-    case MessageEntity::Type::CustomEmoji:
-      return true;
-    default:
-      return false;
-  }
-}
-
-void remove_unallowed_quote_entities(FormattedText &text) {
-  td::remove_if(text.entities, [](const auto &entity) { return !is_allowed_quote_entity(entity); });
 }
 
 static int32 text_length(Slice text) {
@@ -3540,7 +3520,7 @@ vector<tl_object_ptr<secret_api::MessageEntity>> get_input_secret_message_entiti
   return result;
 }
 
-Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contacts_manager,
+Result<vector<MessageEntity>> get_message_entities(const UserManager *user_manager,
                                                    vector<tl_object_ptr<td_api::textEntity>> &&input_entities,
                                                    bool allow_all) {
   vector<MessageEntity> entities;
@@ -3613,8 +3593,8 @@ Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contac
         }
         auto user_id = LinkManager::get_link_user_id(entity->url_);
         if (user_id.is_valid()) {
-          if (contacts_manager != nullptr) {
-            TRY_STATUS(contacts_manager->get_input_user(user_id));
+          if (user_manager != nullptr) {
+            TRY_STATUS(user_manager->get_input_user(user_id));
           }
           entities.emplace_back(offset, length, user_id);
           break;
@@ -3629,8 +3609,8 @@ Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contac
       case td_api::textEntityTypeMentionName::ID: {
         auto entity = static_cast<const td_api::textEntityTypeMentionName *>(input_entity->type_.get());
         UserId user_id(entity->user_id_);
-        if (contacts_manager != nullptr) {
-          TRY_STATUS(contacts_manager->get_input_user(user_id));
+        if (user_manager != nullptr) {
+          TRY_STATUS(user_manager->get_input_user(user_id));
         }
         entities.emplace_back(offset, length, user_id);
         break;
@@ -3666,7 +3646,7 @@ Result<vector<MessageEntity>> get_message_entities(const ContactsManager *contac
   return std::move(entities);
 }
 
-vector<MessageEntity> get_message_entities(const ContactsManager *contacts_manager,
+vector<MessageEntity> get_message_entities(const UserManager *user_manager,
                                            vector<tl_object_ptr<telegram_api::MessageEntity>> &&server_entities,
                                            const char *source) {
   vector<MessageEntity> entities;
@@ -3777,11 +3757,11 @@ vector<MessageEntity> get_message_entities(const ContactsManager *contacts_manag
           LOG(ERROR) << "Receive invalid " << user_id << " in MentionName from " << source;
           continue;
         }
-        if (contacts_manager == nullptr) {
+        if (user_manager == nullptr) {
           LOG(ERROR) << "Receive unknown " << user_id << " in MentionName from " << source;
           continue;
         }
-        auto r_input_user = contacts_manager->get_input_user(user_id);
+        auto r_input_user = user_manager->get_input_user(user_id);
         if (r_input_user.is_error()) {
           LOG(ERROR) << "Receive wrong " << user_id << ": " << r_input_user.error() << " from " << source;
           continue;
@@ -3942,27 +3922,35 @@ vector<MessageEntity> get_message_entities(Td *td, vector<tl_object_ptr<secret_a
   return entities;
 }
 
-telegram_api::object_ptr<telegram_api::textWithEntities> get_input_text_with_entities(
-    const ContactsManager *contacts_manager, const FormattedText &text, const char *source) {
+telegram_api::object_ptr<telegram_api::textWithEntities> get_input_text_with_entities(const UserManager *user_manager,
+                                                                                      const FormattedText &text,
+                                                                                      const char *source) {
   return telegram_api::make_object<telegram_api::textWithEntities>(
-      text.text, get_input_message_entities(contacts_manager, text.entities, source));
+      text.text, get_input_message_entities(user_manager, text.entities, source));
 }
 
-FormattedText get_formatted_text(const ContactsManager *contacts_manager,
+FormattedText get_formatted_text(const UserManager *user_manager, string &&text,
+                                 vector<telegram_api::object_ptr<telegram_api::MessageEntity>> &&server_entities,
+                                 bool skip_media_timestamps, bool skip_trim, const char *source) {
+  auto entities = get_message_entities(user_manager, std::move(server_entities), source);
+  auto status = fix_formatted_text(text, entities, true, true, true, skip_media_timestamps, skip_trim);
+  if (status.is_error()) {
+    LOG(ERROR) << "Receive error " << status << " from " << source << " while parsing \"" << text << "\"("
+               << hex_encode(text) << ')';
+    if (!clean_input_string(text)) {
+      text.clear();
+    }
+    entities = find_entities(text, true, skip_media_timestamps);
+  }
+  return {std::move(text), std::move(entities)};
+}
+
+FormattedText get_formatted_text(const UserManager *user_manager,
                                  telegram_api::object_ptr<telegram_api::textWithEntities> text_with_entities,
-                                 bool allow_empty, bool skip_new_entities, bool skip_bot_commands,
                                  bool skip_media_timestamps, bool skip_trim, const char *source) {
   CHECK(text_with_entities != nullptr);
-  auto entities = get_message_entities(contacts_manager, std::move(text_with_entities->entities_), source);
-  auto status = fix_formatted_text(text_with_entities->text_, entities, allow_empty, skip_new_entities,
-                                   skip_bot_commands, skip_media_timestamps, skip_trim);
-  if (status.is_error()) {
-    if (!clean_input_string(text_with_entities->text_)) {
-      text_with_entities->text_.clear();
-    }
-    entities = find_entities(text_with_entities->text_, skip_bot_commands, skip_media_timestamps);
-  }
-  return {std::move(text_with_entities->text_), std::move(entities)};
+  return get_formatted_text(user_manager, std::move(text_with_entities->text_),
+                            std::move(text_with_entities->entities_), skip_media_timestamps, skip_trim, source);
 }
 
 // like clean_input_string but also fixes entities
@@ -4246,7 +4234,7 @@ static vector<MessageEntity> resplit_entities(vector<MessageEntity> &&splittable
   return std::move(entities);
 }
 
-static void fix_entities(vector<MessageEntity> &entities) {
+void fix_entities(vector<MessageEntity> &entities) {
   sort_entities(entities);
 
   if (are_entities_valid(entities)) {
@@ -4361,7 +4349,7 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
       entities.clear();
       return Status::OK();
     }
-    return Status::Error(400, "Message must be non-empty");
+    return Status::Error(400, "Text must be non-empty");
   }
 
   // re-fix entities if needed after removal of some characters
@@ -4417,7 +4405,7 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
   LOG_CHECK(check_utf8(text)) << text;
 
   if (!allow_empty && is_empty_string(text)) {
-    return Status::Error(400, "Message must be non-empty");
+    return Status::Error(400, "Text must be non-empty");
   }
 
   constexpr size_t LENGTH_LIMIT = 35000;  // server side limit
@@ -4442,11 +4430,11 @@ Status fix_formatted_text(string &text, vector<MessageEntity> &entities, bool al
   return Status::OK();
 }
 
-FormattedText get_message_text(const ContactsManager *contacts_manager, string message_text,
+FormattedText get_message_text(const UserManager *user_manager, string message_text,
                                vector<tl_object_ptr<telegram_api::MessageEntity>> &&server_entities,
                                bool skip_new_entities, bool skip_media_timestamps, int32 send_date, bool from_album,
                                const char *source) {
-  auto entities = get_message_entities(contacts_manager, std::move(server_entities), source);
+  auto entities = get_message_entities(user_manager, std::move(server_entities), source);
   auto debug_message_text = message_text;
   auto debug_entities = entities;
   auto status = fix_formatted_text(message_text, entities, true, skip_new_entities, true, skip_media_timestamps, false);
@@ -4528,8 +4516,8 @@ Result<FormattedText> get_formatted_text(const Td *td, DialogId dialog_id,
     return Status::Error(400, "Text must be non-empty");
   }
 
-  TRY_RESULT(entities, get_message_entities(td->contacts_manager_.get(), std::move(text->entities_)));
-  auto need_skip_bot_commands = need_always_skip_bot_commands(td->contacts_manager_.get(), dialog_id, is_bot);
+  TRY_RESULT(entities, get_message_entities(td->user_manager_.get(), std::move(text->entities_)));
+  auto need_skip_bot_commands = need_always_skip_bot_commands(td->user_manager_.get(), dialog_id, is_bot);
   bool parse_markdown = td->option_manager_->get_option_boolean("always_parse_markdown");
   bool skip_new_entities = is_bot && td->option_manager_->get_option_integer("session_count") > 1;
   TRY_STATUS(fix_formatted_text(text->text_, entities, allow_empty, skip_new_entities || parse_markdown,
@@ -4581,7 +4569,7 @@ bool has_bot_commands(const FormattedText *text) {
   return false;
 }
 
-bool need_always_skip_bot_commands(const ContactsManager *contacts_manager, DialogId dialog_id, bool is_bot) {
+bool need_always_skip_bot_commands(const UserManager *user_manager, DialogId dialog_id, bool is_bot) {
   if (!dialog_id.is_valid()) {
     return true;
   }
@@ -4592,11 +4580,11 @@ bool need_always_skip_bot_commands(const ContactsManager *contacts_manager, Dial
   switch (dialog_id.get_type()) {
     case DialogType::User: {
       auto user_id = dialog_id.get_user_id();
-      return user_id == ContactsManager::get_replies_bot_user_id() || !contacts_manager->is_user_bot(user_id);
+      return user_id == UserManager::get_replies_bot_user_id() || !user_manager->is_user_bot(user_id);
     }
     case DialogType::SecretChat: {
-      auto user_id = contacts_manager->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
-      return !user_id.is_valid() || !contacts_manager->is_user_bot(user_id);
+      auto user_id = user_manager->get_secret_chat_user_id(dialog_id.get_secret_chat_id());
+      return !user_id.is_valid() || !user_manager->is_user_bot(user_id);
     }
     case DialogType::Chat:
     case DialogType::Channel:
@@ -4608,7 +4596,7 @@ bool need_always_skip_bot_commands(const ContactsManager *contacts_manager, Dial
   }
 }
 
-vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(const ContactsManager *contacts_manager,
+vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(const UserManager *user_manager,
                                                                               const vector<MessageEntity> &entities,
                                                                               const char *source) {
   vector<tl_object_ptr<telegram_api::MessageEntity>> result;
@@ -4650,7 +4638,8 @@ vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(co
             make_tl_object<telegram_api::messageEntityTextUrl>(entity.offset, entity.length, entity.argument));
         break;
       case MessageEntity::Type::MentionName: {
-        auto input_user = contacts_manager->get_input_user_force(entity.user_id);
+        CHECK(user_manager != nullptr);
+        auto input_user = user_manager->get_input_user_force(entity.user_id);
         result.push_back(make_tl_object<telegram_api::inputMessageEntityMentionName>(entity.offset, entity.length,
                                                                                      std::move(input_user)));
         break;
@@ -4690,11 +4679,11 @@ vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(co
   return result;
 }
 
-vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(const ContactsManager *contacts_manager,
+vector<tl_object_ptr<telegram_api::MessageEntity>> get_input_message_entities(const UserManager *user_manager,
                                                                               const FormattedText *text,
                                                                               const char *source) {
   if (text != nullptr && !text->entities.empty()) {
-    return get_input_message_entities(contacts_manager, text->entities, source);
+    return get_input_message_entities(user_manager, text->entities, source);
   }
   return {};
 }
@@ -4712,7 +4701,7 @@ void remove_unallowed_entities(const Td *td, FormattedText &text, DialogId dialo
   }
 
   if (dialog_id.get_type() == DialogType::SecretChat) {
-    auto layer = td->contacts_manager_->get_secret_chat_layer(dialog_id.get_secret_chat_id());
+    auto layer = td->user_manager_->get_secret_chat_layer(dialog_id.get_secret_chat_id());
     td::remove_if(text.entities, [layer](const MessageEntity &entity) {
       if (layer < static_cast<int32>(SecretChatLayer::NewEntities) &&
           (entity.type == MessageEntity::Type::Underline || entity.type == MessageEntity::Type::Strikethrough ||
@@ -4731,69 +4720,9 @@ void remove_unallowed_entities(const Td *td, FormattedText &text, DialogId dialo
       remove_intersecting_entities(text.entities);
     }
   }
-  if (dialog_id != td->dialog_manager_->get_my_dialog_id() &&
-      !td->contacts_manager_->can_use_premium_custom_emoji(dialog_id)) {
-    remove_premium_custom_emoji_entities(td, text.entities, false);
+  if (!td->dialog_manager_->can_use_premium_custom_emoji_in_dialog(dialog_id)) {
+    remove_premium_custom_emoji_entities(td, text.entities, true);
   }
-}
-
-int32 search_quote(FormattedText &&text, FormattedText &&quote, int32 quote_position) {
-  auto process_quote_entities = [](FormattedText &text, int32 length) {
-    remove_unallowed_quote_entities(text);
-    td::remove_if(text.entities, [length](const MessageEntity &entity) {
-      if (entity.offset < 0 || entity.offset >= length) {
-        return true;
-      }
-      if (entity.length <= 0 || entity.length > length - entity.offset) {
-        return true;
-      }
-      return false;
-    });
-    remove_empty_entities(text.entities);
-    fix_entities(text.entities);
-    remove_empty_entities(text.entities);
-  };
-  int32 length = text_length(text.text);
-  int32 quote_length = text_length(quote.text);
-  if (quote_length == 0 || quote_length > length) {
-    return -1;
-  }
-  process_quote_entities(text, length);
-  process_quote_entities(quote, quote_length);
-
-  quote_position = clamp(quote_position, 0, length - 1);
-  vector<size_t> byte_positions;
-  byte_positions.reserve(length);
-  for (size_t i = 0; i < text.text.size(); i++) {
-    auto c = static_cast<unsigned char>(text.text[i]);
-    if (is_utf8_character_first_code_unit(c)) {
-      byte_positions.push_back(i);
-      if (c >= 0xf0) {  // >= 4 bytes in symbol => surrogate pair
-        byte_positions.push_back(string::npos);
-      }
-    }
-  }
-  CHECK(byte_positions.size() == static_cast<size_t>(length));
-  auto check_position = [&text, &quote, &byte_positions, length, quote_length](int32 position) {
-    if (position < 0 || position > length - quote_length) {
-      return false;
-    }
-    auto byte_position = byte_positions[position];
-    if (byte_position == string::npos || text.text[byte_position] != quote.text[0] ||
-        Slice(text.text).substr(byte_position, quote.text.size()) != quote.text) {
-      return false;
-    }
-    return true;
-  };
-  for (int32 i = 0; quote_position - i >= 0 || quote_position + i + 1 <= length - quote_length; i++) {
-    if (check_position(quote_position - i)) {
-      return quote_position - i;
-    }
-    if (check_position(quote_position + i + 1)) {
-      return quote_position + i + 1;
-    }
-  }
-  return -1;
 }
 
 }  // namespace td

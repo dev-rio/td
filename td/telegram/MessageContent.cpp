@@ -17,8 +17,8 @@
 #include "td/telegram/ChannelId.h"
 #include "td/telegram/ChannelType.h"
 #include "td/telegram/ChatId.h"
+#include "td/telegram/ChatManager.h"
 #include "td/telegram/Contact.h"
-#include "td/telegram/ContactsManager.h"
 #include "td/telegram/CustomEmojiId.h"
 #include "td/telegram/Dependencies.h"
 #include "td/telegram/DialogManager.h"
@@ -70,6 +70,8 @@
 #include "td/telegram/SecureValue.h"
 #include "td/telegram/SecureValue.hpp"
 #include "td/telegram/ServerMessageId.h"
+#include "td/telegram/SharedDialog.h"
+#include "td/telegram/SharedDialog.hpp"
 #include "td/telegram/StickerFormat.h"
 #include "td/telegram/StickersManager.h"
 #include "td/telegram/StickersManager.hpp"
@@ -82,6 +84,7 @@
 #include "td/telegram/TopDialogManager.h"
 #include "td/telegram/TranscriptionManager.h"
 #include "td/telegram/UserId.h"
+#include "td/telegram/UserManager.h"
 #include "td/telegram/Venue.h"
 #include "td/telegram/Version.h"
 #include "td/telegram/VideoNotesManager.h"
@@ -498,7 +501,7 @@ class MessageChatSetTtl final : public MessageContent {
 
 class MessageUnsupported final : public MessageContent {
  public:
-  static constexpr int32 CURRENT_VERSION = 30;
+  static constexpr int32 CURRENT_VERSION = 31;
   int32 version = CURRENT_VERSION;
 
   MessageUnsupported() = default;
@@ -1101,6 +1104,21 @@ class MessageBoostApply final : public MessageContent {
   }
 };
 
+class MessageDialogShared final : public MessageContent {
+ public:
+  vector<SharedDialog> shared_dialogs;
+  int32 button_id = 0;
+
+  MessageDialogShared() = default;
+  MessageDialogShared(vector<SharedDialog> &&shared_dialogs, int32 button_id)
+      : shared_dialogs(std::move(shared_dialogs)), button_id(button_id) {
+  }
+
+  MessageContentType get_type() const final {
+    return MessageContentType::DialogShared;
+  }
+};
+
 template <class StorerT>
 static void store(const MessageContent *content, StorerT &storer) {
   CHECK(content != nullptr);
@@ -1655,6 +1673,14 @@ static void store(const MessageContent *content, StorerT &storer) {
       BEGIN_STORE_FLAGS();
       END_STORE_FLAGS();
       store(m->boost_count, storer);
+      break;
+    }
+    case MessageContentType::DialogShared: {
+      const auto *m = static_cast<const MessageDialogShared *>(content);
+      BEGIN_STORE_FLAGS();
+      END_STORE_FLAGS();
+      store(m->shared_dialogs, storer);
+      store(m->button_id, storer);
       break;
     }
     default:
@@ -2393,6 +2419,19 @@ static void parse(unique_ptr<MessageContent> &content, ParserT &parser) {
       content = std::move(m);
       break;
     }
+    case MessageContentType::DialogShared: {
+      auto m = make_unique<MessageDialogShared>();
+      BEGIN_PARSE_FLAGS();
+      END_PARSE_FLAGS();
+      parse(m->shared_dialogs, parser);
+      if (m->shared_dialogs.empty() ||
+          any_of(m->shared_dialogs, [](const auto &shared_dialog) { return !shared_dialog.is_valid(); })) {
+        is_bad = true;
+      }
+      parse(m->button_id, parser);
+      content = std::move(m);
+      break;
+    }
 
     default:
       is_bad = true;
@@ -2432,17 +2471,10 @@ InlineMessageContent create_inline_message_content(Td *td, FileId file_id,
   switch (bot_inline_message->get_id()) {
     case telegram_api::botInlineMessageText::ID: {
       auto inline_message = move_tl_object_as<telegram_api::botInlineMessageText>(bot_inline_message);
-      auto entities = get_message_entities(td->contacts_manager_.get(), std::move(inline_message->entities_),
-                                           "botInlineMessageText");
-      auto status = fix_formatted_text(inline_message->message_, entities, false, true, true, false, false);
-      if (status.is_error()) {
-        LOG(ERROR) << "Receive error " << status << " while parsing botInlineMessageText " << inline_message->message_;
-        break;
-      }
-
+      auto text = get_formatted_text(td->user_manager_.get(), std::move(inline_message->message_),
+                                     std::move(inline_message->entities_), false, false, "botInlineMessageText");
       result.disable_web_page_preview = inline_message->no_webpage_;
       result.invert_media = inline_message->invert_media_;
-      FormattedText text{std::move(inline_message->message_), std::move(entities)};
       WebPageId web_page_id;
       if (!result.disable_web_page_preview) {
         web_page_id = td->web_pages_manager_->get_web_page_by_url(get_first_url(text).str());
@@ -2458,18 +2490,10 @@ InlineMessageContent create_inline_message_content(Td *td, FileId file_id,
       if (inline_message->manual_) {
         web_page_url = std::move(inline_message->url_);
       }
-      auto entities = get_message_entities(td->contacts_manager_.get(), std::move(inline_message->entities_),
-                                           "botInlineMessageMediaWebPage");
-      auto status =
-          fix_formatted_text(inline_message->message_, entities, !web_page_url.empty(), true, true, false, false);
-      if (status.is_error()) {
-        LOG(ERROR) << "Receive error " << status << " while parsing botInlineMessageMediaWebPage "
-                   << inline_message->message_;
-        break;
-      }
-
-      FormattedText text{std::move(inline_message->message_), std::move(entities)};
-      WebPageId web_page_id =
+      auto text =
+          get_formatted_text(td->user_manager_.get(), std::move(inline_message->message_),
+                             std::move(inline_message->entities_), false, false, "botInlineMessageMediaWebPage");
+      auto web_page_id =
           td->web_pages_manager_->get_web_page_by_url(web_page_url.empty() ? get_first_url(text).str() : web_page_url);
       result.message_content = td::make_unique<MessageText>(
           std::move(text), web_page_id, inline_message->force_small_media_, inline_message->force_large_media_,
@@ -2516,7 +2540,7 @@ InlineMessageContent create_inline_message_content(Td *td, FileId file_id,
     case telegram_api::botInlineMessageMediaAuto::ID: {
       auto inline_message = move_tl_object_as<telegram_api::botInlineMessageMediaAuto>(bot_inline_message);
       auto caption =
-          get_message_text(td->contacts_manager_.get(), inline_message->message_, std::move(inline_message->entities_),
+          get_message_text(td->user_manager_.get(), inline_message->message_, std::move(inline_message->entities_),
                            true, false, 0, false, "create_inline_message_content");
       if (allowed_media_content_id == td_api::inputMessageAnimation::ID) {
         result.message_content = make_unique<MessageAnimation>(file_id, std::move(caption), false);
@@ -2614,7 +2638,7 @@ static Result<InputMessageContent> create_input_message_content(
       WebPageId web_page_id;
       bool can_add_web_page_previews =
           dialog_id.get_type() != DialogType::Channel ||
-          td->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id()).can_add_web_page_previews();
+          td->chat_manager_->get_channel_permissions(dialog_id.get_channel_id()).can_add_web_page_previews();
       if (!is_bot && !disable_web_page_preview && can_add_web_page_previews) {
         web_page_id = td->web_pages_manager_->get_web_page_by_url(
             web_page_url.empty() ? get_first_url(input_message_text.text).str() : web_page_url);
@@ -2712,7 +2736,7 @@ static Result<InputMessageContent> create_input_message_content(
       self_destruct_type = std::move(input_video_note->self_destruct_type_);
 
       auto length = input_video_note->length_;
-      if (length < 0 || length >= 640) {
+      if (length < 0 || length > 640) {
         return Status::Error(400, "Wrong video note length");
       }
 
@@ -2748,14 +2772,14 @@ static Result<InputMessageContent> create_input_message_content(
       break;
     }
     case td_api::inputMessageContact::ID: {
-      TRY_RESULT(contact, process_input_message_contact(std::move(input_message_content)));
+      TRY_RESULT(contact, process_input_message_contact(td, std::move(input_message_content)));
       content = make_unique<MessageContact>(std::move(contact));
       break;
     }
     case td_api::inputMessageGame::ID: {
-      TRY_RESULT(game, process_input_message_game(td->contacts_manager_.get(), std::move(input_message_content)));
+      TRY_RESULT(game, process_input_message_game(td->user_manager_.get(), std::move(input_message_content)));
       via_bot_user_id = game.get_bot_user_id();
-      if (via_bot_user_id == td->contacts_manager_->get_my_id()) {
+      if (via_bot_user_id == td->user_manager_->get_my_id()) {
         via_bot_user_id = UserId();
       }
 
@@ -2777,13 +2801,9 @@ static Result<InputMessageContent> create_input_message_content(
       constexpr size_t MAX_POLL_OPTION_LENGTH = 100;               // server-side limit
       constexpr size_t MAX_POLL_OPTIONS = 10;                      // server-side limit
       auto input_poll = static_cast<td_api::inputMessagePoll *>(input_message_content.get());
-      if (!clean_input_string(input_poll->question_)) {
-        return Status::Error(400, "Poll question must be encoded in UTF-8");
-      }
-      if (input_poll->question_.empty()) {
-        return Status::Error(400, "Poll question must be non-empty");
-      }
-      if (utf8_length(input_poll->question_) > MAX_POLL_QUESTION_LENGTH) {
+      TRY_RESULT(question,
+                 get_formatted_text(td, dialog_id, std::move(input_poll->question_), is_bot, false, true, false));
+      if (utf8_length(question.text) > MAX_POLL_QUESTION_LENGTH) {
         return Status::Error(400, PSLICE() << "Poll question length must not exceed " << MAX_POLL_QUESTION_LENGTH);
       }
       if (input_poll->options_.size() <= 1) {
@@ -2792,16 +2812,13 @@ static Result<InputMessageContent> create_input_message_content(
       if (input_poll->options_.size() > MAX_POLL_OPTIONS) {
         return Status::Error(400, PSLICE() << "Poll can't have more than " << MAX_POLL_OPTIONS << " options");
       }
-      for (auto &option : input_poll->options_) {
-        if (!clean_input_string(option)) {
-          return Status::Error(400, "Poll options must be encoded in UTF-8");
-        }
-        if (option.empty()) {
-          return Status::Error(400, "Poll options must be non-empty");
-        }
-        if (utf8_length(option) > MAX_POLL_OPTION_LENGTH) {
+      vector<FormattedText> options;
+      for (auto &input_option : input_poll->options_) {
+        TRY_RESULT(option, get_formatted_text(td, dialog_id, std::move(input_option), is_bot, false, true, false));
+        if (utf8_length(option.text) > MAX_POLL_OPTION_LENGTH) {
           return Status::Error(400, PSLICE() << "Poll options length must not exceed " << MAX_POLL_OPTION_LENGTH);
         }
+        options.push_back(std::move(option));
       }
 
       bool allow_multiple_answers = false;
@@ -2838,10 +2855,9 @@ static Result<InputMessageContent> create_input_message_content(
         close_date = 0;
       }
       bool is_closed = is_bot ? input_poll->is_closed_ : false;
-      content = make_unique<MessagePoll>(
-          td->poll_manager_->create_poll(std::move(input_poll->question_), std::move(input_poll->options_),
-                                         input_poll->is_anonymous_, allow_multiple_answers, is_quiz, correct_option_id,
-                                         std::move(explanation), open_period, close_date, is_closed));
+      content = make_unique<MessagePoll>(td->poll_manager_->create_poll(
+          std::move(question), std::move(options), input_poll->is_anonymous_, allow_multiple_answers, is_quiz,
+          correct_option_id, std::move(explanation), open_period, close_date, is_closed));
       break;
     }
     case td_api::inputMessageStory::ID: {
@@ -2855,7 +2871,7 @@ static Result<InputMessageContent> create_input_message_content(
       if (!story_id.is_server()) {
         return Status::Error(400, "Story can't be forwarded");
       }
-      if (td->dialog_manager_->get_input_peer(dialog_id, AccessRights::Read) == nullptr) {
+      if (td->dialog_manager_->get_input_peer(story_sender_dialog_id, AccessRights::Read) == nullptr) {
         return Status::Error(400, "Can't access the story");
       }
       content = make_unique<MessageStory>(story_full_id, false);
@@ -3039,6 +3055,7 @@ bool can_have_input_media(const Td *td, const MessageContent *content, bool is_s
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       return false;
     case MessageContentType::Animation:
     case MessageContentType::Audio:
@@ -3180,6 +3197,7 @@ SecretInputMedia get_secret_input_media(const MessageContent *content, Td *td,
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       break;
     default:
       UNREACHABLE();
@@ -3323,6 +3341,7 @@ static tl_object_ptr<telegram_api::InputMedia> get_input_media_impl(
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       break;
     default:
       UNREACHABLE();
@@ -3528,6 +3547,7 @@ void delete_message_content_thumbnail(MessageContent *content, Td *td) {
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       break;
     default:
       UNREACHABLE();
@@ -3544,18 +3564,17 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
     }
     switch (dialog_type) {
       case DialogType::User:
-        return td->contacts_manager_->get_user_default_permissions(dialog_id.get_user_id());
+        return td->user_manager_->get_user_default_permissions(dialog_id.get_user_id());
       case DialogType::Chat:
-        return td->contacts_manager_->get_chat_permissions(dialog_id.get_chat_id()).get_effective_restricted_rights();
+        return td->chat_manager_->get_chat_permissions(dialog_id.get_chat_id()).get_effective_restricted_rights();
       case DialogType::Channel:
-        return td->contacts_manager_->get_channel_permissions(dialog_id.get_channel_id())
-            .get_effective_restricted_rights();
+        return td->chat_manager_->get_channel_permissions(dialog_id.get_channel_id()).get_effective_restricted_rights();
       case DialogType::SecretChat:
-        return td->contacts_manager_->get_secret_chat_default_permissions(dialog_id.get_secret_chat_id());
+        return td->user_manager_->get_secret_chat_default_permissions(dialog_id.get_secret_chat_id());
       case DialogType::None:
       default:
         UNREACHABLE();
-        return td->contacts_manager_->get_user_default_permissions(UserId());
+        return td->user_manager_->get_user_default_permissions(UserId());
     }
   }();
 
@@ -3590,8 +3609,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
       }
       break;
     case MessageContentType::Game:
-      if (dialog_type == DialogType::Channel &&
-          td->contacts_manager_->is_broadcast_channel(dialog_id.get_channel_id())) {
+      if (dialog_type == DialogType::Channel && td->chat_manager_->is_broadcast_channel(dialog_id.get_channel_id())) {
         // return Status::Error(400, "Games can't be sent to channel chats");
       }
       if (dialog_type == DialogType::SecretChat) {
@@ -3644,13 +3662,12 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
       if (!permissions.can_send_polls()) {
         return Status::Error(400, "Not enough rights to send polls to the chat");
       }
-      if (dialog_type == DialogType::Channel &&
-          td->contacts_manager_->is_broadcast_channel(dialog_id.get_channel_id()) &&
+      if (dialog_type == DialogType::Channel && td->chat_manager_->is_broadcast_channel(dialog_id.get_channel_id()) &&
           !td->poll_manager_->get_poll_is_anonymous(static_cast<const MessagePoll *>(content)->poll_id)) {
         return Status::Error(400, "Non-anonymous polls can't be sent to channel chats");
       }
       if (dialog_type == DialogType::User && !is_forward && !td->auth_manager_->is_bot() &&
-          !td->contacts_manager_->is_user_bot(dialog_id.get_user_id())) {
+          !td->user_manager_->is_user_bot(dialog_id.get_user_id())) {
         return Status::Error(400, "Polls can't be sent to the private chat");
       }
       if (dialog_type == DialogType::SecretChat) {
@@ -3693,7 +3710,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
         return Status::Error(400, "Not enough rights to send video notes to the chat");
       }
       if (dialog_type == DialogType::User &&
-          td->contacts_manager_->get_user_voice_messages_forbidden(dialog_id.get_user_id())) {
+          td->user_manager_->get_user_voice_messages_forbidden(dialog_id.get_user_id())) {
         return Status::Error(400, "User restricted receiving of voice messages");
       }
       break;
@@ -3702,7 +3719,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
         return Status::Error(400, "Not enough rights to send voice notes to the chat");
       }
       if (dialog_type == DialogType::User &&
-          td->contacts_manager_->get_user_voice_messages_forbidden(dialog_id.get_user_id())) {
+          td->user_manager_->get_user_voice_messages_forbidden(dialog_id.get_user_id())) {
         return Status::Error(400, "User restricted receiving of video messages");
       }
       break;
@@ -3753,6 +3770,7 @@ Status can_send_message_content(DialogId dialog_id, const MessageContent *conten
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       UNREACHABLE();
   }
   return Status::OK();
@@ -3900,6 +3918,7 @@ static int32 get_message_content_media_index_mask(const MessageContent *content,
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       return 0;
     default:
       UNREACHABLE();
@@ -4182,6 +4201,8 @@ vector<UserId> get_message_content_min_user_ids(const Td *td, const MessageConte
     case MessageContentType::ExpiredVoiceNote:
       break;
     case MessageContentType::BoostApply:
+      break;
+    case MessageContentType::DialogShared:
       break;
     default:
       UNREACHABLE();
@@ -4588,6 +4609,7 @@ void merge_message_contents(Td *td, const MessageContent *old_content, MessageCo
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       break;
     default:
       UNREACHABLE();
@@ -4738,6 +4760,7 @@ bool merge_message_content_file_id(Td *td, MessageContent *message_content, File
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       LOG(ERROR) << "Receive new file " << new_file_id << " in a sent message of the type " << content_type;
       break;
     default:
@@ -5272,6 +5295,14 @@ void compare_message_contents(Td *td, const MessageContent *old_content, const M
       }
       break;
     }
+    case MessageContentType::DialogShared: {
+      const auto *lhs = static_cast<const MessageDialogShared *>(old_content);
+      const auto *rhs = static_cast<const MessageDialogShared *>(new_content);
+      if (lhs->shared_dialogs != rhs->shared_dialogs || lhs->button_id != rhs->button_id) {
+        need_update = true;
+      }
+      break;
+    }
     default:
       UNREACHABLE();
       break;
@@ -5341,7 +5372,7 @@ void register_message_content(Td *td, const MessageContent *content, MessageFull
       return td->stickers_manager_->register_premium_gift(static_cast<const MessageGiveaway *>(content)->months,
                                                           message_full_id, source);
     case MessageContentType::SuggestProfilePhoto:
-      return td->contacts_manager_->register_suggested_profile_photo(
+      return td->user_manager_->register_suggested_profile_photo(
           static_cast<const MessageSuggestProfilePhoto *>(content)->photo);
     case MessageContentType::Story:
       return td->story_manager_->register_story(static_cast<const MessageStory *>(content)->story_full_id,
@@ -5996,8 +6027,8 @@ unique_ptr<MessageContent> get_message_content(Td *td, FormattedText message,
     case telegram_api::messageMediaContact::ID: {
       auto media = move_tl_object_as<telegram_api::messageMediaContact>(media_ptr);
       if (media->user_id_ != 0) {
-        td->contacts_manager_->get_user_id_object(UserId(media->user_id_),
-                                                  "MessageMediaContact");  // to ensure updateUser
+        td->user_manager_->get_user_id_object(UserId(media->user_id_),
+                                              "MessageMediaContact");  // to ensure updateUser
       }
       return make_unique<MessageContact>(Contact(std::move(media->phone_number_), std::move(media->first_name_),
                                                  std::move(media->last_name_), std::move(media->vcard_),
@@ -6328,7 +6359,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::Poll:
       if (type == MessageContentDupType::Copy || type == MessageContentDupType::ServerCopy) {
         return make_unique<MessagePoll>(
-            td->poll_manager_->dup_poll(static_cast<const MessagePoll *>(content)->poll_id));
+            td->poll_manager_->dup_poll(dialog_id, static_cast<const MessagePoll *>(content)->poll_id));
       } else {
         return make_unique<MessagePoll>(*static_cast<const MessagePoll *>(content));
       }
@@ -6434,6 +6465,7 @@ unique_ptr<MessageContent> dup_message_content(Td *td, DialogId dialog_id, const
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       return nullptr;
     default:
       UNREACHABLE();
@@ -6836,6 +6868,30 @@ unique_ptr<MessageContent> get_action_message_content(Td *td, tl_object_ptr<tele
       auto action = move_tl_object_as<telegram_api::messageActionBoostApply>(action_ptr);
       return make_unique<MessageBoostApply>(max(action->boosts_, 0));
     }
+    case telegram_api::messageActionRequestedPeerSentMe::ID: {
+      auto action = move_tl_object_as<telegram_api::messageActionRequestedPeerSentMe>(action_ptr);
+      vector<SharedDialog> shared_dialogs;
+      for (auto &peer : action->peers_) {
+        SharedDialog shared_dialog(td, std::move(peer));
+        if (shared_dialog.is_valid()) {
+          shared_dialogs.push_back(std::move(shared_dialog));
+        }
+      }
+      if (shared_dialogs.size() > 1) {
+        for (auto shared_dialog : shared_dialogs) {
+          if (!shared_dialog.is_user()) {
+            shared_dialogs.clear();
+            break;
+          }
+        }
+      }
+      if (shared_dialogs.empty() || shared_dialogs.size() != action->peers_.size()) {
+        LOG(ERROR) << "Receive invalid " << oneline(to_string(action));
+        break;
+      }
+
+      return td::make_unique<MessageDialogShared>(std::move(shared_dialogs), action->button_id_);
+    }
     default:
       UNREACHABLE();
   }
@@ -6865,7 +6921,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     }
     case MessageContentType::Contact: {
       const auto *m = static_cast<const MessageContact *>(content);
-      return make_tl_object<td_api::messageContact>(m->contact.get_contact_object());
+      return make_tl_object<td_api::messageContact>(m->contact.get_contact_object(td));
     }
     case MessageContentType::Document: {
       const auto *m = static_cast<const MessageDocument *>(content);
@@ -6884,7 +6940,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::LiveLocation: {
       const auto *m = static_cast<const MessageLiveLocation *>(content);
       auto passed = max(G()->unix_time() - message_date, 0);
-      auto expires_in = max(0, m->period - passed);
+      auto expires_in = m->period == std::numeric_limits<int32>::max() ? m->period : max(0, m->period - passed);
       auto heading = expires_in == 0 ? 0 : m->heading;
       auto proximity_alert_radius = expires_in == 0 ? 0 : m->proximity_alert_radius;
       return make_tl_object<td_api::messageLocation>(m->location.get_location_object(), m->period, expires_in, heading,
@@ -6971,7 +7027,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::ChatCreate: {
       const auto *m = static_cast<const MessageChatCreate *>(content);
       return make_tl_object<td_api::messageBasicGroupChatCreate>(
-          m->title, td->contacts_manager_->get_user_ids_object(m->participant_user_ids, "MessageChatCreate"));
+          m->title, td->user_manager_->get_user_ids_object(m->participant_user_ids, "MessageChatCreate"));
     }
     case MessageContentType::ChatChangeTitle: {
       const auto *m = static_cast<const MessageChatChangeTitle *>(content);
@@ -6993,7 +7049,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::ChatAddUsers: {
       const auto *m = static_cast<const MessageChatAddUsers *>(content);
       return make_tl_object<td_api::messageChatAddMembers>(
-          td->contacts_manager_->get_user_ids_object(m->user_ids, "MessageChatAddUsers"));
+          td->user_manager_->get_user_ids_object(m->user_ids, "MessageChatAddUsers"));
     }
     case MessageContentType::ChatJoinedByLink: {
       const MessageChatJoinedByLink *m = static_cast<const MessageChatJoinedByLink *>(content);
@@ -7005,12 +7061,12 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::ChatDeleteUser: {
       const auto *m = static_cast<const MessageChatDeleteUser *>(content);
       return make_tl_object<td_api::messageChatDeleteMember>(
-          td->contacts_manager_->get_user_id_object(m->user_id, "MessageChatDeleteMember"));
+          td->user_manager_->get_user_id_object(m->user_id, "MessageChatDeleteMember"));
     }
     case MessageContentType::ChatMigrateTo: {
       const auto *m = static_cast<const MessageChatMigrateTo *>(content);
       return make_tl_object<td_api::messageChatUpgradeTo>(
-          td->contacts_manager_->get_supergroup_id_object(m->migrated_to_channel_id, "MessageChatUpgradeTo"));
+          td->chat_manager_->get_supergroup_id_object(m->migrated_to_channel_id, "MessageChatUpgradeTo"));
     }
     case MessageContentType::ChannelCreate: {
       const auto *m = static_cast<const MessageChannelCreate *>(content);
@@ -7019,8 +7075,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::ChannelMigrateFrom: {
       const auto *m = static_cast<const MessageChannelMigrateFrom *>(content);
       return make_tl_object<td_api::messageChatUpgradeFrom>(
-          m->title,
-          td->contacts_manager_->get_basic_group_id_object(m->migrated_from_chat_id, "MessageChatUpgradeFrom"));
+          m->title, td->chat_manager_->get_basic_group_id_object(m->migrated_from_chat_id, "MessageChatUpgradeFrom"));
     }
     case MessageContentType::PinMessage: {
       const auto *m = static_cast<const MessagePinMessage *>(content);
@@ -7035,7 +7090,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::ChatSetTtl: {
       const auto *m = static_cast<const MessageChatSetTtl *>(content);
       return make_tl_object<td_api::messageChatSetMessageAutoDeleteTime>(
-          m->ttl, td->contacts_manager_->get_user_id_object(m->from_user_id, "MessageChatSetTtl"));
+          m->ttl, td->user_manager_->get_user_id_object(m->from_user_id, "MessageChatSetTtl"));
     }
     case MessageContentType::Call: {
       const auto *m = static_cast<const MessageCall *>(content);
@@ -7119,7 +7174,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       const auto *m = static_cast<const MessageInviteToGroupCall *>(content);
       return make_tl_object<td_api::messageInviteVideoChatParticipants>(
           td->group_call_manager_->get_group_call_id(m->input_group_call_id, DialogId()).get(),
-          td->contacts_manager_->get_user_ids_object(m->user_ids, "MessageInviteToGroupCall"));
+          td->user_manager_->get_user_ids_object(m->user_ids, "MessageInviteToGroupCall"));
     }
     case MessageContentType::ChatSetTheme: {
       const auto *m = static_cast<const MessageChatSetTheme *>(content);
@@ -7138,9 +7193,9 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       int64 gifter_user_id = 0;
       if (dialog_id.get_type() == DialogType::User) {
         auto user_id = dialog_id.get_user_id();
-        if (user_id != ContactsManager::get_service_notifications_user_id() &&
-            !td->contacts_manager_->is_user_bot(user_id) && !td->contacts_manager_->is_user_support(user_id)) {
-          gifter_user_id = td->contacts_manager_->get_user_id_object(user_id, "MessageGiftPremium");
+        if (user_id != UserManager::get_service_notifications_user_id() && !td->user_manager_->is_user_bot(user_id) &&
+            !td->user_manager_->is_user_support(user_id)) {
+          gifter_user_id = td->user_manager_->get_user_id_object(user_id, "MessageGiftPremium");
         }
       }
       return make_tl_object<td_api::messageGiftedPremium>(
@@ -7171,25 +7226,15 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
       const auto *m = static_cast<const MessageRequestedDialog *>(content);
       CHECK(!m->shared_dialog_ids.empty());
       if (m->shared_dialog_ids[0].get_type() == DialogType::User) {
-        vector<int64> user_ids;
+        vector<td_api::object_ptr<td_api::sharedUser>> users;
         for (auto shared_dialog_id : m->shared_dialog_ids) {
-          if (td->auth_manager_->is_bot()) {
-            user_ids.push_back(shared_dialog_id.get_user_id().get());
-          } else {
-            user_ids.push_back(
-                td->contacts_manager_->get_user_id_object(shared_dialog_id.get_user_id(), "MessageRequestedDialog"));
-          }
+          users.push_back(SharedDialog(shared_dialog_id).get_shared_user_object(td));
         }
-        return make_tl_object<td_api::messageUsersShared>(std::move(user_ids), m->button_id);
+        return make_tl_object<td_api::messageUsersShared>(std::move(users), m->button_id);
       }
       CHECK(m->shared_dialog_ids.size() == 1);
-      int64 chat_id;
-      if (td->auth_manager_->is_bot()) {
-        chat_id = m->shared_dialog_ids[0].get();
-      } else {
-        chat_id = td->dialog_manager_->get_chat_id_object(m->shared_dialog_ids[0], "messageChatShared");
-      }
-      return make_tl_object<td_api::messageChatShared>(chat_id, m->button_id);
+      return make_tl_object<td_api::messageChatShared>(SharedDialog(m->shared_dialog_ids[0]).get_shared_chat_object(td),
+                                                       m->button_id);
     }
     case MessageContentType::WebViewWriteAccessAllowed: {
       const auto *m = static_cast<const MessageWebViewWriteAccessAllowed *>(content);
@@ -7238,7 +7283,7 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
           td->dialog_manager_->get_chat_id_object(DialogId(m->boosted_channel_id), "messagePremiumGiveawayWinners"),
           m->giveaway_message_id.get(), m->additional_dialog_count, m->winners_selection_date, m->only_new_subscribers,
           m->was_refunded, m->month_count, m->prize_description, m->winner_count,
-          td->contacts_manager_->get_user_ids_object(m->winner_user_ids, "messagePremiumGiveawayWinners"),
+          td->user_manager_->get_user_ids_object(m->winner_user_ids, "messagePremiumGiveawayWinners"),
           m->unclaimed_count);
     }
     case MessageContentType::ExpiredVideoNote:
@@ -7248,6 +7293,20 @@ tl_object_ptr<td_api::MessageContent> get_message_content_object(const MessageCo
     case MessageContentType::BoostApply: {
       const auto *m = static_cast<const MessageBoostApply *>(content);
       return td_api::make_object<td_api::messageChatBoost>(m->boost_count);
+    }
+    case MessageContentType::DialogShared: {
+      const auto *m = static_cast<const MessageDialogShared *>(content);
+      CHECK(!m->shared_dialogs.empty());
+      if (m->shared_dialogs[0].is_user()) {
+        vector<td_api::object_ptr<td_api::sharedUser>> users;
+        for (const auto &shared_dialog : m->shared_dialogs) {
+          users.push_back(shared_dialog.get_shared_user_object(td));
+        }
+        return td_api::make_object<td_api::messageUsersShared>(std::move(users), m->button_id);
+      }
+      CHECK(m->shared_dialogs.size() == 1);
+      return td_api::make_object<td_api::messageChatShared>(m->shared_dialogs[0].get_shared_chat_object(td),
+                                                            m->button_id);
     }
     default:
       UNREACHABLE();
@@ -7684,6 +7743,7 @@ string get_message_content_search_text(const Td *td, const MessageContent *conte
     case MessageContentType::ExpiredVideoNote:
     case MessageContentType::ExpiredVoiceNote:
     case MessageContentType::BoostApply:
+    case MessageContentType::DialogShared:
       return string();
     default:
       UNREACHABLE();
@@ -8027,6 +8087,8 @@ void add_message_content_dependencies(Dependencies &dependencies, const MessageC
     case MessageContentType::ExpiredVoiceNote:
       break;
     case MessageContentType::BoostApply:
+      break;
+    case MessageContentType::DialogShared:
       break;
     default:
       UNREACHABLE();
